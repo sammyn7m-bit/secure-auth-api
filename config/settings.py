@@ -14,14 +14,21 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("DJANGO_SECRET_KEY is not set in .env")
+
+DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
+
+ALLOWED_HOSTS = ["localhost", "127.0.0.1"] if DEBUG else []
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+#BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 # Quick-start development settings - unsuitable for production
@@ -52,6 +59,7 @@ INSTALLED_APPS = [
 # thirdparty apps
     'rest_framework',
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
 ]
 
 MIDDLEWARE = [
@@ -156,3 +164,19 @@ MAILERS = {
 """
 
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+
+REST_FRAMEWORK = {
+"DEFAULT_AUTHENTICATION_CLASSES": [
+"rest_framework_simplejwt.authentication.JWTAuthentication",
+],
+}
+
+from datetime import timedelta
+
+SIMPLE_JWT = {
+"ACCESS_TOKEN_LIFETIME": timedelta(minutes=5),
+"REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+"ROTATE_REFRESH_TOKENS": True,
+"BLACKLIST_AFTER_ROTATION": True,
+}
