@@ -1,60 +1,35 @@
-import hashlib
-
-from django.core.cache import cache
-from rest_framework.exceptions import AuthenticationFailed
+from django.contrib.auth import get_user_model
+from django.contrib.auth.signals import user_login_failed, user_logged_in
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 
-FAILURE_LIMIT = 5
-FAILURE_WINDOW_SECONDS = 15 * 60
-COOLDOWN_SECONDS = 5 * 60
-
-
-def _account_key(prefix, email):
-    normalized_email = email.strip().casefold()
-    digest = hashlib.sha256(normalized_email.encode()).hexdigest()
-    return f"login_protection:{prefix}:{digest}"
-
-
-def _record_failure(key):
-    if cache.add(key, 1, timeout=FAILURE_WINDOW_SECONDS):
-        return 1
-
-    try:
-        return cache.incr(key)
-    except ValueError:
-        # The key may have expired between the add and increment.
-        cache.add(key, 1, timeout=FAILURE_WINDOW_SECONDS)
-        return cache.get(key, 1)
+User = get_user_model()
 
 
 class ProtectedTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
-        email = str(attrs.get(self.username_field, ""))
-        account_key = _account_key("failures", email)
-        blocked_key = _account_key("blocked", email)
-
-        # Use the same generic authentication message to avoid revealing
-        # whether an email address belongs to a registered account.
-        if cache.get(blocked_key):
-            raise AuthenticationFailed("Invalid email or password.")
+        request = self.context.get("request")
+        email = str(attrs.get(self.username_field, "")).strip().casefold()
 
         try:
             data = super().validate(attrs)
-        except AuthenticationFailed:
-            failures = _record_failure(account_key)
+        except Exception as exc:
+            # Only report authentication failures to Axes. Other errors
+            # should not count as incorrect password attempts.
+            from rest_framework.exceptions import AuthenticationFailed
 
-            if failures >= FAILURE_LIMIT:
-                cache.set(
-                    blocked_key,
-                    True,
-                    timeout=COOLDOWN_SECONDS,
+            if isinstance(exc, AuthenticationFailed):
+                user_login_failed.send(
+                    sender=User,
+                    request=getattr(request, "_request", request),
+                    credentials={"username": email},
                 )
-
             raise
 
-        # A successful login clears the account's failure counter.
-        cache.delete(account_key)
-        cache.delete(blocked_key)
+        user_logged_in.send(
+            sender=User,
+            request=getattr(request, "_request", request),
+            user=self.user,
+        )
 
         return data

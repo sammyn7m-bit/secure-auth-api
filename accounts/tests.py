@@ -1,12 +1,10 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import identify_hasher
-from django.core.cache import cache
+from django.test import TestCase, override_settings
 from rest_framework import status
-from rest_framework.test import APITestCase, APIClient
+from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
-
-from accounts.login_protection import _account_key
-from accounts.views import RateLimitedLoginView
+from axes.models import AccessAttempt
 
 User = get_user_model()
 
@@ -45,10 +43,10 @@ class RegistrationTests(APITestCase):
             **self.payload,
             "username": "anotheruser",
         }
-
         response = self.client.post(
             self.url, duplicate_payload, format="json"
         )
+
         self.assertEqual(
             response.status_code, status.HTTP_400_BAD_REQUEST
         )
@@ -125,9 +123,14 @@ class AuthenticationTests(APITestCase):
         )
 
 
-class FailedLoginProtectionTests(APITestCase):
+@override_settings(
+    AXES_FAILURE_LIMIT=5,
+    AXES_COOLOFF_TIME=1 / 12,
+    AXES_LOCKOUT_PARAMETERS=["ip_address", "username"],
+)
+class AxesLoginProtectionTests(APITestCase):
     def setUp(self):
-        cache.clear()
+        AccessAttempt.objects.all().delete()
         self.user = User.objects.create_user(
             username="protecteduser",
             email="protecteduser@example.com",
@@ -139,54 +142,45 @@ class FailedLoginProtectionTests(APITestCase):
             "password": "Strong-Protected-Password-923!",
         }
 
-    def test_repeated_failures_temporarily_block_login(self):
-        cache.clear()
+    def test_failed_login_attempts_are_recorded(self):
+        response = self.client.post(
+            self.url,
+            {
+                "email": self.credentials["email"],
+                "password": "Wrong-Password-123!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code, status.HTTP_401_UNAUTHORIZED
+        )
+        self.assertTrue(AccessAttempt.objects.exists())
+
+    def test_repeated_failures_trigger_axes_lockout(self):
+        # Use a fresh client for predictable request throttling.
+        from rest_framework.test import APIClient
+
         client = APIClient()
 
-        # Temporarily disable the IP throttle to test account protection
-        # independently. Restore it even if an assertion fails.
-        original_throttles = RateLimitedLoginView.throttle_classes
-        RateLimitedLoginView.throttle_classes = []
-
-        try:
-            for _ in range(5):
-                response = client.post(
-                    self.url,
-                    {
-                        "email": self.credentials["email"],
-                        "password": "Wrong-Password-123!",
-                    },
-                    format="json",
-                )
-                self.assertEqual(
-                    response.status_code,
-                    status.HTTP_401_UNAUTHORIZED,
-                )
-
-            blocked_key = _account_key(
-                "blocked", self.credentials["email"]
+        for _ in range(5):
+            client.post(
+                self.url,
+                {
+                    "email": self.credentials["email"],
+                    "password": "Wrong-Password-123!",
+                },
+                format="json",
             )
-            self.assertTrue(cache.get(blocked_key))
 
-            response = client.post(
-                self.url, self.credentials, format="json"
-            )
-            self.assertEqual(
-                response.status_code,
+        response = client.post(self.url, self.credentials, format="json")
+
+        self.assertIn(
+            response.status_code,
+            [
                 status.HTTP_401_UNAUTHORIZED,
-            )
-        finally:
-            RateLimitedLoginView.throttle_classes = original_throttles
-
-    def test_successful_login_clears_failure_counter(self):
-        failure_key = _account_key(
-            "failures", self.credentials["email"]
+                status.HTTP_403_FORBIDDEN,
+                status.HTTP_429_TOO_MANY_REQUESTS,
+            ],
         )
-        cache.set(failure_key, 2, timeout=900)
-
-        response = self.client.post(
-            self.url, self.credentials, format="json"
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIsNone(cache.get(failure_key))
+        self.assertTrue(AccessAttempt.objects.exists())

@@ -1,7 +1,10 @@
 from django.contrib.auth import get_user_model
+from django.utils.decorators import method_decorator
 from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.views import TokenObtainPairView
+
+from axes.decorators import axes_dispatch
 
 from .serializers import RegisterSerializer
 from .throttles import LoginRateThrottle
@@ -18,6 +21,7 @@ class RegisterView(CreateAPIView):
     authentication_classes = []
 
 
+@method_decorator(axes_dispatch, name="dispatch")
 class RateLimitedLoginView(TokenObtainPairView):
     serializer_class = ProtectedTokenObtainPairSerializer
     throttle_classes = [LoginRateThrottle]

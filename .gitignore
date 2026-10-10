@@ -8,3 +8,7 @@ venv/
 !.env.example
 staticfiles/
 media/
+
+# Redis persistence files
+dump.rdb
+appendonlydir/
