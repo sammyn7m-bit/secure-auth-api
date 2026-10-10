@@ -54,7 +54,6 @@ INSTALLED_APPS = [
 
 # local apps
     'accounts',
-    'authentication',
     'security',
 
 # thirdparty apps
