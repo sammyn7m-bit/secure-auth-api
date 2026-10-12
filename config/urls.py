@@ -29,6 +29,9 @@ urlpatterns = [
     # Account endpoints
     path("api/auth/", include("accounts.urls")),
 
+    #security endpoints
+    path("api/security/", include("security.urls")),
+
     # JWT endpoints
     path(
         "api/auth/login/",
