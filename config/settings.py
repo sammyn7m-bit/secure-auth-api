@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'django_otp',
     'django_otp.plugins.otp_totp',
 
+    "drf_spectacular",
 ]
 
 MIDDLEWARE = [
@@ -184,6 +185,9 @@ REST_FRAMEWORK = {
         "anon": "100/day",
         "login": "5/minute",
     },
+
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+
 }
 
 from datetime import timedelta
@@ -222,3 +226,11 @@ AXES_RESET_ON_SUCCESS = True
 AXES_LOCKOUT_PARAMETERS = ["ip_address", "username"]
 AXES_USERNAME_CALLABLE = "accounts.axes_utils.get_axes_username"
 AXES_ENABLE_ADMIN = True
+
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Secure Auth API",
+    "DESCRIPTION": "Authentication and security API built with Django REST Framework.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+}
