@@ -3,16 +3,13 @@ from django.contrib.auth.signals import (
     user_logged_in,
     user_login_failed,
 )
-from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import (
     TokenObtainPairSerializer,
 )
 
-from security.services import (
-    is_totp_enabled,
-    verify_totp,
-)
+from security.mfa_challenges import create_mfa_challenge
+from security.services import is_totp_enabled
 
 
 User = get_user_model()
@@ -21,13 +18,6 @@ User = get_user_model()
 class ProtectedTokenObtainPairSerializer(
     TokenObtainPairSerializer
 ):
-    totp_code = serializers.CharField(
-        required=False,
-        write_only=True,
-        min_length=6,
-        max_length=6,
-    )
-
     def validate(self, attrs):
         request = self.context.get("request")
 
@@ -35,11 +25,7 @@ class ProtectedTokenObtainPairSerializer(
             attrs.get(self.username_field, "")
         ).strip().casefold()
 
-        totp_code = attrs.pop("totp_code", None)
-
         try:
-            # This validates username/password and initially
-            # generates the JWT pair.
             data = super().validate(attrs)
 
         except AuthenticationFailed:
@@ -54,38 +40,22 @@ class ProtectedTokenObtainPairSerializer(
                     "username": username,
                 },
             )
-
             raise
 
+        # Password is correct, but don't return JWTs yet
+        # when this user has MFA enabled.
         if is_totp_enabled(self.user):
-            if not totp_code:
-                raise serializers.ValidationError(
-                    {
-                        "mfa_required": True,
-                        "detail": (
-                            "TOTP code is required."
-                        ),
-                    }
-                )
+            challenge = create_mfa_challenge(
+                self.user
+            )
 
-            if not totp_code.isdigit():
-                raise serializers.ValidationError(
-                    {
-                        "totp_code": (
-                            "TOTP code must contain "
-                            "only digits."
-                        )
-                    }
-                )
+            return {
+                "mfa_required": True,
+                "challenge": challenge,
+                "expires_in": 300,
+            }
 
-            if not verify_totp(
-                self.user,
-                totp_code,
-            ):
-                raise AuthenticationFailed(
-                    "Invalid TOTP code."
-                )
-
+        # No MFA: normal successful login.
         user_logged_in.send(
             sender=User,
             request=getattr(
